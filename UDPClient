@@ -1,0 +1,398 @@
+public class UDPDeconstruct {
+	private int resources, additionalRecords;
+	private String deconstructError = "";
+	private String additionalString = "";
+	private String answerString = "";
+	private String errors = "";
+	private String alias = "";
+	private byte[] sentData = new byte[1024];
+	private byte[] receivedData = new byte[8192*4];
+	private boolean print = false;
+	private boolean error = false;
+	private boolean placed;
+	
+	int recOff, printOff, recordP, questionLength, headLength, responceClass, type, preference;
+	byte b1, b2, b3, b4;
+	boolean firstDot = true;
+	boolean cont;
+	short counter, s;
+	long TTL;
+	UDPClient variable = new UDPClient();
+	String theTYPE = variable.QTYPE;
+	
+	public UDPDeconstruct(byte[] receivedData, byte[] sentData, boolean print) {
+		this.receivedData = receivedData;
+		this.sentData = sentData;
+		this.print = false;
+	}
+	
+	public boolean isValidResponse() {
+		if((receivedData[0] != sentData[0]) || (receivedData[1] != sentData[1])) {
+			deconstructError += "\nUnexpected responce: Server did not respond to the same ID";
+			error = true;
+			return false;
+		}
+		else if((receivedData[2] != -127 && receivedData[2] != -123) || receivedData[3] != -128){
+			
+			if((checkBit(receivedData[3], 8)) == 0) {
+				deconstructError += "\nRecrusive Error : Server does not support recursion";
+				error = true;
+			}
+			if(receivedData[3]== -127 || receivedData[3]== 1) {
+				deconstructError += "\nFormat Error : The server was unable to interpret the query";
+				error = true;
+			}
+			if(receivedData[3] == -126 || receivedData[3]== 2) {
+				deconstructError += "\nServer Failure : Name server was unable to process this query due to a problem with the name server";
+				error = true;
+			}
+			if(receivedData[3] == -125 || receivedData[3]== 3){
+				deconstructError += "\nName Error : Domain name referenced in the query does not exist";
+				error = true;
+			}
+			if(receivedData[3] == -124 || receivedData[3]== 4) {
+				deconstructError += "\nNot Implemented : name server does not support the requested kind of query";
+				error = true;
+			}
+			if(receivedData[3] == -123 || receivedData[3]== 5) {
+				deconstructError += "\nRefused : the name server refuses to perform the requested operation for policy reasons";
+				error = true;
+			}
+			return false;
+		}
+		
+		byte b1 = receivedData[6];
+		byte b2 = receivedData[7];
+		short s = (short) (b1<<8 | b2);
+		resources = s;
+		
+		byte b3 = receivedData[10];
+		byte b4 = receivedData[11];
+		s = (short) (b3<<8 | b4);
+		additionalRecords = s;
+		additionalString += additionalRecords;
+		
+		return true;
+	}
+	
+	public void report() {
+		if(resources >= 1) {
+			System.out.println("\n**Answer Section (" + resources + " records)**");
+			System.out.println(answerString);
+		}else {
+			System.out.println("NOT FOUND");
+		}
+	}
+	
+	public boolean errorReport() {
+		return error;
+	}
+	
+	public void getError() {
+		System.out.println(deconstructError);
+	}
+	
+	public void getResponse() {
+		headLength = UDPConstruct.readHeadLength();
+		questionLength = UDPConstruct.readQuestionLength();
+		recOff = 0;
+		
+		if(print) diagnosis();
+		readAnswer();
+	}
+	
+	void diagnosis() {
+		if(checkBit(receivedData[headLength + questionLength], 8) == 1 && checkBit(receivedData[headLength + questionLength], 7) == 1) {
+			byte b1 = receivedData[headLength + questionLength];
+			byte b2 = receivedData[headLength + questionLength + 1];
+			short s = (short) (b1<<8 | b2);
+			int offset = s & 0x3fff;
+			for(int i = 1; i < 200; i ++) {
+				if(receivedData[offset + i] > 1 && receivedData[offset + i] < 32) {
+					//alias += ".";
+					System.out.println(".");
+				} 
+				else{
+					//alias += (char) receivedData[offset + i];
+					System.out.println((char) receivedData[offset + i]);
+				}
+				if(receivedData[offset + i + 1] == 0) {
+					break;
+				}
+			}
+			//if not compressed	
+		}	 
+		else {
+			for(int i = 1; i < 100; i ++) {
+				//if(data[offset + i] > 0 && data[offset + i] < 65) {
+				if(receivedData[headLength + questionLength + i] > 1 && receivedData[headLength + questionLength + i] < 65) {
+					System.out.print(".");
+				} else {
+					System.out.print((char) receivedData[headLength + questionLength + i]);
+				}
+				if(receivedData[headLength + questionLength  + i + 1] == 0) {
+					break;
+				}
+			}	
+		}
+	}
+	
+	void readIP() {
+		if(print) System.out.print("RDATA is: ");
+		b1 = receivedData[recordP + 1];
+		b2 = receivedData[recordP + 2];
+		b3 = receivedData[recordP + 3];
+		b4 = receivedData[recordP + 4];
+		String[] answer = new String[4];
+		answer[0] = String.valueOf(b1 & 0xff);
+		answer[1] = String.valueOf(b2 & 0xff);
+		answer[2] = String.valueOf(b3 & 0xff);
+		answer[3] = String.valueOf(b4 & 0xff);
+		printOff += 4;
+		
+		String ipAddressAnswer = String.join(".", answer);
+		if(print) System.out.print(ipAddressAnswer);
+		
+		alias = ipAddressAnswer;
+		answerString += alias + "\t";
+		alias = "";
+		if(checkBit(receivedData[2],3) == 1 && type != 28) answerString += "auth";
+		else if(type!=28) answerString += "nonauth";
+		placed = true;		
+	}
+	
+	void readMX() {
+		preference = receivedData[recordP + 1];
+		int recordP2 = recordP + 1;
+		//b2 = receivedData[recordP + 2];
+		//short ss = (short) (b1<<8 | b2);
+		if(checkBit(receivedData[recordP2 + 1], 8) == 1 && 
+				checkBit(receivedData[recordP2 + 1], 7) == 1) {
+			b1 = receivedData[recordP2 + 2];
+			b2 = receivedData[recordP2 + 3];
+			short s = (short) (b1<<8 | b2);
+			int offset = s & 0x3fff;
+			printOff += 2;
+			for(int i = 0; i < 1000; i ++) {
+				alias += (char) receivedData[offset + i];
+				if(receivedData[offset + i + 1] == 0) {
+					break;
+				}
+			}
+		}	 
+		else {
+			for(int i = 0; i < 1000; i ++) {
+				printOff++;
+				if(receivedData[recordP2 + 3 + i] == 0 | receivedData[recordP2 + 3 + i] == 192 ) {
+					break;
+				}
+				alias += (char) receivedData[recordP2 + 1 + i];
+				
+			}	
+		}
+	}
+	
+	void readIPv6() {
+		printOff += 16;
+	}
+	
+	void readRDATA() {
+		firstDot = true;
+		if(print) System.out.print("RDATA is: ");
+		for(int i = 0; i < 200; i ++) {
+			//if we have compression
+			if(checkBit(receivedData[recordP + 1 + i], 8) == 1 && 
+			checkBit(receivedData[recordP + 1 + i], 7) == 1 && cont) {
+				byte B1 = (byte)(receivedData[recordP + 1 + i] & 0xff);
+				byte B2 = (byte)(receivedData[recordP + 2 + i] & 0xff);
+				short S = (short) (B1<<8 | B2);
+				int offset2 = S & 0x3fff;
+				printOff += 2;
+				for(int j = 0; j < 200; j ++) {
+					if(checkBit(receivedData[offset2 + j], 8) == 1 && 
+							checkBit(receivedData[offset2 + j], 7) == 1 && cont) {
+						if(print) System.out.println(".com");
+						alias += ".com";
+						cont = false;
+						break;
+					}
+					if(receivedData[offset2 + j] >= 0 && receivedData[offset2 + j] < 32) {
+						if(firstDot) {
+							firstDot = false;
+						}
+						else {
+							if(print) System.out.print(".");
+							alias += ".";
+						}
+					} else {
+						if(print) System.out.print((char) receivedData[offset2 + j]);
+						alias += (char) receivedData[offset2 + j];
+					}
+					if(receivedData[offset2 + j + 1] == 0) {
+						cont = false;
+						break;
+					}
+				}
+			}
+			else if(cont) {
+				if(receivedData[headLength + questionLength + 12 + i + recOff] > 1 && receivedData[headLength + questionLength + 12 + i + recOff] < 32) {
+					if(firstDot) {
+						printOff++;
+						firstDot = false;
+					}
+					else {
+						printOff++;
+						if(print) System.out.print(".");
+						alias += ".";
+					}
+				} 
+				else {
+					if(print) System.out.print((char) receivedData[headLength + questionLength + 12 + i + recOff]);
+					alias += (char) receivedData[headLength + questionLength + 12 + i + recOff];
+					printOff++;
+				}
+				if(receivedData[headLength + questionLength  + 12 + i + 1 + recOff] == 0) {
+					printOff++;
+					break;
+				}
+			}
+			if(cont == false) {
+				break;
+			}
+		}
+	}
+	
+	void readTypeClass() {
+		//Read Type
+		type = (int) receivedData[headLength + questionLength + 3 + recOff];
+		short TYPE;
+		if(theTYPE == null) {
+			TYPE = 1;
+		}else if(theTYPE.equals("-ns")) {
+			TYPE = 2;
+		}else if(theTYPE.equals("-mx")){
+			TYPE = 16;
+		}else {
+			TYPE = 1;
+		}
+		if (counter < 1 && type != TYPE) {
+			errors += "\nError\tType missmatch";
+			error = true;
+		}
+		if (type == 1) {
+			answerString += "\nIP\t";
+			answerString += alias + "\t";
+			alias = "";
+		}
+		if (type == 2) {
+			answerString += "\nNS\t";
+			answerString += alias + "\t";
+			alias = "";
+		}
+		if (type == 5) {
+			answerString += "\nCNAME\t";
+			answerString += alias + "\t";
+			alias = "";
+		}
+		if (type == 16) {
+			answerString += "\nMX\t";
+			answerString += alias + "\t";
+			alias = "";
+		}
+		//Read Class
+		responceClass = (int) receivedData[headLength + questionLength + 5 + recOff];
+		if(responceClass != 1) {
+			errors += "\nError\tUnexpected responce: class is not internet";
+		}
+		else {
+			if(print) System.out.println("Class is internet");
+		}
+	}
+	
+	void readTtlRDL() {
+		//Time to Live
+		TTL = (long) ((receivedData[headLength + questionLength + 6 + recOff] & 0xff) << 24 | 
+				(receivedData[headLength + questionLength + 7 + recOff] & 0xff) << 16 | 
+				(receivedData[headLength + questionLength + 8 + recOff] & 0xff) << 8 | 
+				(receivedData[headLength + questionLength + 9 + recOff] & 0xff) << 0);
+		
+		if(receivedData[headLength + questionLength + 6 + recOff] == 0 && 
+				receivedData[headLength + questionLength + 7 + recOff] == 0 && 
+				receivedData[headLength + questionLength + 8 + recOff] == 0 && 
+				receivedData[headLength + questionLength + 9 + recOff] == 0) {
+			if(print) System.out.println("This responce is only valid for this query and will not be cached");
+		}
+		if(type != 16 && type != 28) answerString += TTL + "\t"; 
+		if(print) System.out.println("Resonse will be cached for " + TTL + " seconds");
+		
+		//RD Length
+		b1 = receivedData[headLength + questionLength + 10 + recOff];
+		b2 = receivedData[headLength + questionLength + 11 + recOff];
+		recordP = headLength + questionLength + 11 + recOff;
+		s = (short) (b1<<8 | b2);
+		cont = true;
+	}
+	
+	void readAnswer() {
+		
+		//number of answers in records
+		byte b1 = receivedData[6];
+		byte b2 = receivedData[7];
+		s = (short) (b1<<8 | b2);
+		
+		if (additionalRecords == 0) counter = s;
+		else counter = (short) (s + additionalRecords);
+		
+		firstDot = true;
+		while (counter > 0) {
+			
+			printOff = 0;
+			readTypeClass();
+			readTtlRDL();
+			
+			//Read Answer
+			if(type == 1) {
+				readIP();
+			}
+			else if(type == 16) {
+				readMX();
+			}
+			else if(type == 28) {
+				readIPv6();
+			}
+			else {
+				readRDATA();
+			}
+			if(type == 16) {
+				answerString += preference + "\t";
+				answerString += TTL + "\t";
+			}
+			answerString += alias + "\t";
+			
+			alias = "";
+			if(!placed &&checkBit(receivedData[2],3) == 1 && type != 28) answerString += "auth";
+			else if(!placed && type!= 28) answerString += "nonauth";
+			placed = false;
+			
+			if(print) System.out.println(" ");
+			counter--;
+			firstDot = true;
+			recOff = recOff + printOff + 12;
+			if(counter>0) {
+				if(print) System.out.println("----------Next RR----------");
+				if(print) System.out.println(" ");
+				if(print) System.out.println("Name is above CNAME (compressed)");
+			}
+			else {
+				if(print) System.out.println("---------------------------");
+			}
+			if(counter == additionalRecords) {
+				answerString += "\n\n**Additional Section (" + additionalRecords + " records)**\n";
+			}
+		}
+	}
+	
+	static int checkBit(byte dataByte, int index) {
+		return (dataByte >> index & 1);
+	}	
+}
