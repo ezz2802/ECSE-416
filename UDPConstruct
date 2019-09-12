@@ -1,0 +1,302 @@
+	public class UDPConstruct {
+		
+	private static int timeout, retries, port, questionLength;
+	private static int headLength = 12;
+	private static String QTYPE, dnsString, link, details;
+	private static String errors = "";
+	private static String[] args;
+	private static byte[] sendData = new byte[1024];
+	private static boolean dnsSpecified = false;
+	private static boolean argsChecked = false;
+	private static boolean error = false;
+	private static boolean print;
+	
+	public UDPConstruct(String[] args) {
+		UDPConstruct.args = args;
+	}
+	
+	static void readInput() {
+	
+		int dnsLength = 0;
+		int dnsLocation = 0;
+		
+		timeout = 5*1000;
+		retries = 3;
+		port = 53;
+		QTYPE = "A";
+		dnsString = "132.206.85.18";
+		link = args[args.length - 1];
+		int elementsUsed = 0;
+		
+		for(int i = 0; i < args.length; i++) {
+			if(args[i].equals("-t")) {
+				if(args[i+1].matches("[0-9]+")) {
+					elementsUsed += 2;
+					timeout = Integer.parseInt(args[i+1])*1000;
+				}
+				else {
+					errors += "\nError\tIncorrect input syntax: timeout invalid";
+					error = true;
+				}
+			}
+			else if(args[i].equals("-r")) {
+				if(args[i+1].matches("[0-9]+")) {
+					elementsUsed += 2;
+					retries = Integer.parseInt(args[i+1]);
+				}
+				else {
+					errors += "\nError\tIncorrect input syntax: retries invalid";
+					error = true;
+				}
+			}
+			else if(args[i].equals("-p")) {
+				if(args[i+1].matches("[0-9]+")) {
+					elementsUsed += 2;
+					port = Integer.parseInt(args[i+1]);
+				}
+				else {
+					errors += "\nError\tIncorrect input syntax: port invalid";
+					error = true;
+				}
+			}
+			else if(args[i].equals("-mx") | args[i].equals("-MX")) {
+				elementsUsed++;
+				QTYPE = args[i];
+			}
+			else if(args[i].equals("-ns") | args[i].equals("-NS")) {
+				elementsUsed ++;
+				QTYPE = args[i];
+			}
+			else if(args[i].toCharArray()[0] == '@') {
+				elementsUsed ++;
+				dnsLength = args[i].toCharArray().length - 1;
+				dnsSpecified = true;
+				dnsLocation = i;
+			} else if (i!= args.length -1 && !args[i].matches("[0-9]+") && !argsChecked) {
+				argsChecked = true;
+				errors += "\nError\tIncorrect input syntax: arguments invalid";
+				error = true;
+			}
+		}
+		
+		if(dnsSpecified) {
+			char[] dnsGiven = args[dnsLocation].toCharArray();
+			char[] dns = new char[dnsLength];
+			for(int i = 0; i < dnsLength; i++) {
+				dns[i] = dnsGiven[i+1];
+			}
+			dnsString = String.valueOf(dns);
+			if(!validDNS()) {
+				errors += "\nError\tIncorrect input syntax: dns invalid";
+				error = true;
+			}
+		} else {
+			errors += "\nError\tIncorrect input syntax: DNS not specified";
+			error = true;
+		}
+		if(port != 53) {
+			errors += "Warning:\t\tPossible port missmatch";
+		}
+		
+		String[] splited = dnsString.split("\\.");
+		int[] dnsSplit = new int[splited.length];
+		for(int i = 0; i< splited.length; i++) {
+			dnsSplit[i] = Integer.parseInt(splited[i]);
+			if(dnsSplit[i] > 255) {
+				error = true;
+				errors += "\nError\tIncorrect input syntax: dns out of range";
+				break;
+			}
+		}
+		
+		details += "\nTimeout:\t" + timeout;
+		details += "\nRetries:\t" + retries;
+		details +="\nPort:\t\t" + port;
+		details += "\nQTYPE:\t\t" + QTYPE;
+		details += "\ndnsString:\t" + dnsString;
+		details += "\nLink:\t\t" + link;
+		
+		if(elementsUsed != args.length - 1 && !error) {
+			errors += "\nError\tIncorrect input syntax: name not provided";
+			error = true;
+		}
+		
+	}
+	
+	private static boolean validDNS() {
+		char[] dnsArray = dnsString.toCharArray();
+		int dotCount = 0;
+	    for(int i = 0; i < dnsArray.length; i++) {
+	        if (dnsArray[i] == '0' | dnsArray[i] == '1' | dnsArray[i] == '2' | dnsArray[i] == '3' | dnsArray[i] == '4' | dnsArray[i] == '5' | dnsArray[i] == '6' | dnsArray[i] == '7' | dnsArray[i] == '8' | dnsArray[i] == '9' | dnsArray[i] == '.') {
+	        		if(dnsArray[i] == '.') {
+	        			dotCount++;
+	        		}
+	        } else {
+	        		return false;
+	        }
+	    }
+	    if(dotCount != 3) {
+	    		return false;
+	    }
+	    return true;
+	}
+	
+	public static boolean isValid() {
+		return !error;
+	}
+	
+	public static void build() {
+		genHeader();
+		genQuestion();
+	}
+	
+	public static void genHeader(){
+		
+		short ID = (short) (Math.random()*((double)Short.MAX_VALUE));
+		sendData[0] = (byte)((ID >> 8) & 0xff);
+		sendData[1] = (byte)(ID & 0xff);
+
+		short sec2 = 256;		
+		sendData[2] = (byte)((sec2 >> 8) & 0xff);
+		sendData[3] = (byte)(sec2 & 0xff);
+		
+		short QDCOUNT = 1;
+		sendData[4] = (byte)((QDCOUNT >> 8) & 0xff);
+		sendData[5] = (byte)(QDCOUNT & 0xff);
+		
+		short ANCOUNT = 0;
+		sendData[6] = (byte)((ANCOUNT >> 8) & 0xff);
+		sendData[7] = (byte)(ANCOUNT & 0xff);
+		
+		short NSCOUNT = 0;
+		sendData[8] = (byte)((NSCOUNT >> 8) & 0xff);
+		sendData[9] = (byte)(NSCOUNT & 0xff);
+		
+		short ARCOUNT = 0;
+		sendData[10] = (byte)((ARCOUNT >> 8) & 0xff);
+		sendData[11] = (byte)(ARCOUNT & 0xff);
+		
+		if(print) {
+			System.out.println("ID is " + ID);
+			System.out.println("Sec 2 is " + sec2);
+			System.out.println("QDCOUNT is " + QDCOUNT);
+			System.out.println("ANCOUNT is " + ANCOUNT);
+			System.out.println("NSCOUNT is " + NSCOUNT);
+			System.out.println("ARCOUNT is " + ARCOUNT);
+			
+			for(int i = 0; i < headLength; i++) {
+				System.out.print(sendData[i] + " ");
+				if(i%2 == 1) {
+					System.out.println(" ");
+				}
+			}
+		}
+	}
+	
+	private static void genQuestion() {
+		
+		char chars[] = link.toCharArray();
+		int endLength = 4;
+		questionLength = chars.length + 2 + endLength;
+		
+		byte toAdd[] = new byte[questionLength];
+		short QCLASS = 1;
+		
+		//------------ Filling the link with proper syntax-----------
+		int counter = 0;
+		toAdd[0] = (byte)('.' & 0xff);
+		toAdd[toAdd.length - 1 - endLength] = (byte)(0 & 0xff);
+		
+		for(int i = 0; i< chars.length; i++) {
+			toAdd[i+1] = (byte)(chars[i] & 0xff);
+		}
+		
+		for(int i = toAdd.length - 2 - endLength; i > -1; i--) {
+			if(toAdd[i] == '.') {
+				toAdd[i] = (byte)(counter & 0xff);
+				counter = 0;
+			} else {
+				counter++;
+			}
+		}
+		short TYPE;
+		if(QTYPE == null) {
+			TYPE = 1;
+		} else if(QTYPE.equals("-ns")) {
+			TYPE = 2;
+		} else if(QTYPE.equals("-mx")){
+			TYPE = 16;
+		} else {
+			TYPE = 1;
+		}
+		
+		for(int i = 0; i < questionLength - endLength; i++) {
+			sendData[i + headLength] = toAdd[i];
+		}
+		
+		sendData[headLength + questionLength - 4] = (byte)((TYPE >> 8) & 0xff);
+		sendData[headLength + questionLength - 3] = (byte)(TYPE & 0xff);
+		
+		sendData[headLength + questionLength - 2] = (byte)((QCLASS >> 8) & 0xff);
+		sendData[headLength + questionLength - 1] = (byte)(QCLASS & 0xff);
+		
+		if(print) {
+			for(int i = 0; i < (headLength + questionLength); i++) {
+				if(i == 0) 				{ System.out.print("---Header---"); } 
+				if(i == headLength) 		{ System.out.print("\n---Question---"); }
+				if(i%2 == 0) 			{ System.out.println(" "); }
+				System.out.print(sendData[i] + "\t"
+						+ "");
+			}
+		}
+		if(print) System.out.println(" ");
+	}
+	
+	public static int readTimeout() {
+		return timeout;
+	}
+	
+	public static int readRetries() {
+		return retries;
+	}
+	
+	public static int readPort() {
+		return port;
+	}
+	
+	public static String readQTYPE() {
+		return QTYPE;
+	}
+	
+	public static String readdnsString() {
+		return dnsString;
+	}
+	
+	public static String readLink() {
+		return link;
+	}
+	
+	public static byte[] readData() {
+		return sendData;
+	}
+	
+	public static int readHeadLength() {
+		return headLength;
+	}
+	
+	public static int readQuestionLength() {
+		return questionLength;
+	}
+	
+	public static String readErrors() {
+		return errors;
+	}
+	
+	public static String readInfo() {
+		return details;
+	}
+	
+	public static boolean readError() {
+		return error;
+	}
+}
